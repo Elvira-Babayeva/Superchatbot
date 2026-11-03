@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SuperChat</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mut:#6b7280;--me:#2563eb;--bd:#e5e7eb;--rec:#dc2626}
+@media(prefers-color-scheme:dark){:root{--bg:#111418;--card:#1b1f26;--tx:#e8eaed;--mut:#9aa3af;--me:#3b82f6;--bd:#2b313a;--rec:#f87171}}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{font:15px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--tx);display:flex;flex-direction:column;max-width:760px;margin:auto}
+header{padding:12px 16px;font-weight:600;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px}
+header .sub{font-weight:400;color:var(--mut);flex:1}
+header select,header button{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;padding:4px 8px;font:inherit;font-size:13px;cursor:pointer}
+header button[aria-pressed=true]{background:var(--me);color:#fff;border-color:var(--me)}
+#log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+#log.drop{outline:2px dashed var(--me);outline-offset:-8px}
+.m{max-width:85%;padding:9px 13px;border-radius:14px;white-space:pre-wrap;background:var(--card);border:1px solid var(--bd)}
+.m img{max-width:100%;max-height:220px;border-radius:8px;display:block}
+.u{align-self:flex-end;background:var(--me);color:#fff;border-color:var(--me)}
+.tag{font-size:11px;color:var(--mut);margin-top:4px}
+#chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 16px 8px}
+#chips button{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:99px;padding:5px 11px;cursor:pointer;font-size:13px}
+form{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--bd)}
+input[type=text]{flex:1;min-width:0;padding:11px 13px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);font:inherit}
+button.s{padding:0 18px;border:0;border-radius:10px;background:var(--me);color:#fff;font:inherit;cursor:pointer}
+button.i{width:42px;border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx);font-size:18px;cursor:pointer}
+button.i:disabled{opacity:.4;cursor:not-allowed}
+button.i.rec{background:var(--rec);border-color:var(--rec);color:#fff;animation:p 1.2s infinite}
+@keyframes p{50%{opacity:.6}}
+.qr{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.qr button{border:1px solid var(--me);background:transparent;color:var(--me);border-radius:99px;padding:4px 11px;cursor:pointer;font:inherit;font-size:13px}
+header button.hearing{background:var(--rec);border-color:var(--rec);color:#fff}
+#status{font-size:12px;color:var(--mut);padding:0 16px 6px;min-height:18px}
+</style></head><body>
+<header>
+ <span>SuperChat</span><span class="sub">· flights · shopping · cinema</span>
+ <select id="vl" title="Voice language" aria-label="Voice language">
+  <option value="auto">Voice: auto</option><option value="en-US">English</option><option value="az-AZ">Azərbaycan</option><option value="ru-RU">Русский</option>
+ </select>
+ <button id="hf" aria-pressed="false" title="Hands-free: detects when you start and stop speaking" aria-label="Hands-free voice">🎧</button>
+ <button id="spk" aria-pressed="false" title="Read replies aloud" aria-label="Read replies aloud">🔊</button>
+</header>
+<div id="log" aria-live="polite"></div>
+<div id="chips"></div>
+<div id="status" role="status"></div>
+<form id="f">
+ <button type="button" class="i" id="cam" title="Search by photo" aria-label="Search by photo">📷</button>
+ <input type="file" id="file" accept="image/*" hidden>
+ <input type="text" id="q" placeholder="Type, speak or send a photo…" autocomplete="off" autofocus>
+ <button type="button" class="i" id="mic" title="Speak" aria-label="Speak">🎤</button>
+ <button class="s">Send</button>
+</form>
+<script src="/static/vad.js"></script>
+<script>
+const sid=Math.random().toString(36).slice(2),log=document.getElementById('log'),q=document.getElementById('q'),
+ status=document.getElementById('status'),mic=document.getElementById('mic'),spk=document.getElementById('spk'),vl=document.getElementById('vl');
+const ICON={flights:'✈️ Flights',shopping:'🛍️ Shopping',cinema:'🎬 Cinema'};
+const BCP={en:'en-US',az:'az-AZ',ru:'ru-RU'};
+let lastLang=null,speakOn=false;
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
+const say=t=>{status.textContent=t||''};
+function add(text,cls,domains){const d=document.createElement('div');d.className='m '+cls;d.innerHTML=esc(text);
+ if(domains&&domains.length){const t=document.createElement('div');t.className='tag';t.textContent=domains.map(x=>ICON[x]).join(' + ');d.appendChild(t)}
+ log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+function addImg(url){const d=document.createElement('div');d.className='m u';const i=new Image();i.src=url;i.alt='Your photo';d.appendChild(i);log.appendChild(d);log.scrollTop=log.scrollHeight}
+function reply(j){lastLang=j.lang||lastLang;const d=add(j.reply,'b',j.domains),ch=j.choices||[];
+ if(ch.length){const w=document.createElement('div');w.className='qr';
+  ch.forEach(c=>{const b=document.createElement('button');b.type='button';b.textContent=c;b.onclick=()=>{w.remove();send(c)};w.appendChild(b)});d.appendChild(w)}
+ speak(j.reply,ch.length>0)}
+
+/* ---------- text chat ---------- */
+async function send(text){add(text,'u');
+ try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sid,message:text})});reply(await r.json())}
+ catch(e){add('Connection error, please try again.','b')}}
+document.getElementById('f').onsubmit=e=>{e.preventDefault();const v=q.value.trim();if(v){q.value='';send(v)}};
+
+/* ---------- voice output (SpeechSynthesis) ---------- */
+const TTS='speechSynthesis' in window;
+function voiceLang(){const v=vl.value;if(v!=='auto')return v;return BCP[lastLang]||(navigator.language||'en-US')}
+function plain(t){return t.replace(/\*\*/g,'').replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\uFE0F]/gu,'').replace(/→/g,' to ').replace(/⭐/g,'rating ')}
+let hfSpeaking=false,ttsId=0;
+function ttsDone(){if(!hfSpeaking)return;hfSpeaking=false;if(hf.vad)hf.vad.setSuppressed(false);if(hf.on)hfListen()}
+function speak(text,question){
+ if(!speakOn||!TTS)return;speechSynthesis.cancel();
+ const paras=text.split(/\n\s*\n/).filter(s=>s.trim()),src=question&&paras.length?paras[paras.length-1]:text;   // a clarification question must be heard, not the list before it
+ const lines=plain(src).split('\n').map(s=>s.trim()).filter(Boolean).slice(0,3).join('. ');  // keep it short: header + first two items
+ const u=new SpeechSynthesisUtterance(lines.slice(0,320)),lang=voiceLang();u.lang=lang;
+ if(hf.on){hfSpeaking=true;hf.vad.setSuppressed(true);if(hf.rec){const r=hf.rec;hf.rec=null;try{r.abort()}catch(e){}}   // do not transcribe our own voice
+  const my=++ttsId;u.onend=u.onerror=()=>{if(my===ttsId)ttsDone()};setTimeout(()=>{if(my===ttsId)ttsDone()},20000)}
+ const voice=speechSynthesis.getVoices().find(v=>v.lang.toLowerCase().startsWith(lang.slice(0,2).toLowerCase()));
+ if(voice)u.voice=voice;else if(lang.startsWith('az'))say('No Azerbaijani voice installed on this device; the reply is shown as text.');
+ speechSynthesis.speak(u)}
+if(!TTS){spk.disabled=true;spk.title='Speech output is not supported in this browser'}
+spk.onclick=()=>{speakOn=!speakOn;spk.setAttribute('aria-pressed',speakOn);if(!speakOn&&TTS)speechSynthesis.cancel()};
+
+/* ---------- voice input (SpeechRecognition) ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+if(!SR||!window.isSecureContext){mic.disabled=true;
+ mic.title=!SR?'Voice input needs Chrome, Edge or Safari':'Voice input needs HTTPS (or localhost)'}
+mic.onclick=()=>{
+ if(hf.on){say('Hands-free is on: just speak.');return}
+ if(rec){rec.stop();return}
+ if(TTS)speechSynthesis.cancel();                       // do not listen to our own voice
+ rec=new SR();rec.lang=voiceLang();rec.interimResults=true;rec.maxAlternatives=1;rec.continuous=false;
+ let finalText='';
+ rec.onstart=()=>{mic.classList.add('rec');say('Listening… ('+rec.lang+')')};
+ rec.onresult=e=>{let interim='';for(const r of e.results){if(r.isFinal)finalText+=r[0].transcript;else interim+=r[0].transcript}q.value=(finalText+interim).trim()};
+ rec.onerror=e=>{say(e.error==='not-allowed'||e.error==='service-not-allowed'?'Microphone permission was denied.':
+   e.error==='no-speech'?'I did not hear anything.':e.error==='language-not-supported'?'This browser does not support '+rec.lang+' voice input.':'Voice error: '+e.error)};
+ rec.onend=()=>{mic.classList.remove('rec');rec=null;const v=(finalText||q.value).trim();if(v){q.value='';send(v);say('')}};
+ try{rec.start()}catch(e){rec=null;say('Could not start the microphone.')}};
+
+/* ---------- hands-free voice: automatic speech start/end detection (VAD) + STT + TTS ---------- */
+const hfBtn=document.getElementById('hf');
+const hf={on:false,stream:null,ctx:null,an:null,buf:null,timer:null,vad:null,rec:null,fails:0,text:'',carry:'',finishing:false,heard:false,last:0};
+const AC=window.AudioContext||window.webkitAudioContext;
+if(!SR||!window.isSecureContext||!window.Vad||!AC||!navigator.mediaDevices){hfBtn.disabled=true;
+ hfBtn.title=!SR?'Hands-free needs Chrome, Edge or Safari':!window.isSecureContext?'Hands-free needs HTTPS (or localhost)':'Hands-free is not supported in this browser'}
+hfBtn.onclick=()=>hf.on?hfStop('Hands-free off.'):hfStart();
+async function hfStart(){
+ if(TTS)speechSynthesis.cancel();
+ try{hf.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})}
+ catch(e){say('Microphone permission was denied.');return}
+ hf.ctx=new AC();if(hf.ctx.state==='suspended')await hf.ctx.resume();
+ const src=hf.ctx.createMediaStreamSource(hf.stream);hf.an=hf.ctx.createAnalyser();hf.an.fftSize=1024;src.connect(hf.an);
+ hf.buf=new Float32Array(hf.an.fftSize);hf.vad=new Vad.VadCore();hf.on=true;hf.fails=0;hf.heard=false;hf.finishing=false;hf.carry='';hf.last=performance.now();
+ hfBtn.setAttribute('aria-pressed','true');hf.timer=setInterval(hfTick,30);hfListen()}
+function hfStop(msg){
+ hf.on=false;clearInterval(hf.timer);if(hf.rec){const r=hf.rec;hf.rec=null;try{r.abort()}catch(e){}}
+ if(hf.stream)hf.stream.getTracks().forEach(t=>t.stop());if(hf.ctx)hf.ctx.close();hf.vad=null;hfSpeaking=false;
+ hfBtn.setAttribute('aria-pressed','false');hfBtn.classList.remove('hearing');say(msg||'')}
+function hfTick(){
+ if(!hf.on||!hf.vad)return;const now=performance.now(),dt=now-hf.last;hf.last=now;
+ hf.an.getFloatTimeDomainData(hf.buf);for(const e of hf.vad.feed(Vad.rms(hf.buf),dt))hfEvent(e)}
+function hfEvent(e){
+ if(e.type==='start'){
+  if(hfSpeaking){if(TTS)speechSynthesis.cancel();++ttsId;ttsDone()}            // barge-in: the user talks over the assistant -> stop talking, start listening
+  hf.heard=true;hfBtn.classList.add('hearing');say('Hearing you…')}
+ else if(e.type==='end')hfFinish();
+ else if(e.type==='cancel'){hf.heard=false;hfBtn.classList.remove('hearing');say('Listening…')}}
+function hfListen(){
+ if(!hf.on||hf.rec||hfSpeaking)return;
+ const r=new SR();r.lang=voiceLang();r.continuous=true;r.interimResults=true;r.maxAlternatives=1;hf.rec=r;hf.text='';
+ r.onresult=ev=>{let s='';for(const x of ev.results)s+=x[0].transcript+' ';hf.text=s.trim();q.value=hf.text};
+ r.onerror=ev=>{
+  if(ev.error==='not-allowed'||ev.error==='service-not-allowed')hfStop('Microphone permission was denied.');
+  else if(ev.error==='language-not-supported')hfStop('This browser does not support '+r.lang+' voice input.');
+  else if(ev.error==='network'&&++hf.fails>=3)hfStop('Speech service unreachable, hands-free stopped.')};
+ r.onend=()=>{
+  if(hf.rec!==r)return;hf.rec=null;const txt=hf.text.trim();
+  if(hf.finishing){hf.finishing=false;hf.heard=false;hfBtn.classList.remove('hearing');
+   if(txt){hf.fails=0;q.value='';send(txt);say('Listening…')}else say("I didn't catch that. Listening…")}
+  else if(hf.heard&&txt)hf.carry=txt;                                                  // recogniser ended by itself mid-utterance: keep what it heard
+  if(hf.on&&!hfSpeaking)setTimeout(hfListen,150)};
+ try{r.start();if(!hf.heard)say('Listening… speak any time ('+r.lang+')')}catch(e){hf.rec=null}}
+function hfFinish(){                                                                   // the VAD says you stopped talking -> finalise the transcript and send it
+ if(hf.rec){hf.finishing=true;try{hf.rec.stop()}catch(e){hf.finishing=false}}
+ else{const c=hf.carry;hf.carry='';hf.heard=false;hfBtn.classList.remove('hearing');if(c){q.value='';send(c);say('Listening…')}}}
+
+/* ---------- visual search ---------- */
+const file=document.getElementById('file');
+document.getElementById('cam').onclick=()=>file.click();
+file.onchange=()=>{if(file.files[0])photo(file.files[0]);file.value=''};
+async function shrink(f,max=1280){                      // phone photos are large; resize before upload
+ try{const bmp=await createImageBitmap(f,{imageOrientation:'from-image'}),k=Math.min(1,max/Math.max(bmp.width,bmp.height));
+  const c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+  return await new Promise(r=>c.toBlob(b=>r(b||f),'image/jpeg',.88))}catch(e){return f}}
+async function photo(f){
+ if(!f.type.startsWith('image/')){add('Please choose an image file.','b');return}
+ addImg(URL.createObjectURL(f));say('Looking at your photo…');
+ const fd=new FormData();fd.append('image',await shrink(f),'photo.jpg');fd.append('session_id',sid);
+ fd.append('lang',BCP[lastLang]?lastLang:(navigator.language||'en').slice(0,2));
+ try{const r=await fetch('/api/visual-search',{method:'POST',body:fd});reply(await r.json())}
+ catch(e){add('Connection error, please try again.','b')}finally{say('')}}
+['dragover','dragleave','drop'].forEach(ev=>document.addEventListener(ev,e=>{
+ if(![...(e.dataTransfer?.types||[])].includes('Files'))return;e.preventDefault();log.classList.toggle('drop',ev==='dragover');
+ if(ev==='drop'&&e.dataTransfer.files[0])photo(e.dataTransfer.files[0])}));
+document.addEventListener('paste',e=>{const f=[...(e.clipboardData?.files||[])].find(x=>x.type.startsWith('image/'));if(f){e.preventDefault();photo(f)}});
+
+/* ---------- chips + welcome ---------- */
+['Find me a flight from Baku to Istanbul on Friday','What is playing tonight?','Do you have wireless headphones under 100 AZN?','I need a flight to Istanbul on 6 November and a backpack for the trip','Bu axşam hansı film var?']
+ .forEach(s=>{const b=document.createElement('button');b.textContent=s;b.onclick=()=>send(s);document.getElementById('chips').appendChild(b)});
+add('Hi! I can help with flights, products and cinema tickets. Tap 🎤 to speak, 🎧 for hands-free (it detects when you start and stop talking) or 📷 to search by photo.','b');
+</script></body></html>

@@ -1,0 +1,6 @@
+# Real-mode settings. Contains secrets: do not commit or share this file.
+AVIASALES_TOKEN=57870b8c1817d1e1e997870e2cfc0a69
+ANTHROPIC_API_KEY=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
+SUPERCHAT_PRODUCTS=dummyjson
+
+SUPERCHAT_DEBUG=1   # shows the real reason (e.g. HTTP 401: invalid x-api-key) in chat; set 0 for production
